@@ -3,9 +3,9 @@ import ast
 import _ast
 import inspect
 
-import test_file
-
-################# OBJECTS
+##################
+# Variable types #
+##################
 
 class Argument(object):
 
@@ -25,7 +25,8 @@ class Number(Argument):
         for r in restrictions:
             final_r = final_r.merge(r)
             if final_r is None:
-                raise ValueError("Cannot satisfy restrictions: %s" % " and ".join((str(a) for a in restrictions)))
+                restriction_list = " and ".join((str(a) for a in restrictions))
+                raise ValueError("Cannot satisfy restrictions:" + restriction_list)
 
         if isinstance(final_r, Null):
             return 0
@@ -50,6 +51,9 @@ class Number(Argument):
 class String(Argument):
     pass
 
+################
+# Restrictions #
+################
 class Restriction(object):
 
     def __init__(self, value):
@@ -172,30 +176,11 @@ class Stmt(object):
         right = compare.comparators[0]
 
         if isinstance(op, _ast.Eq):
-           return cls.split_equals(left, right) 
+            return cls.split_equals(left, right) 
         else:
             raise NotImplementedError("Operator not supported: %s" % op)
 
         raise NotImplementedError("Some unsupported operation occured!")
-
-
-class Branch(object):
-
-    @classmethod
-    def is_terminal(cls, ast_branch):
-        for stmt in ast_branch:
-            if isinstance(stmt, _ast.If):
-                return cls.is_terminal(stmt.body)
-            if isinstance(stmt, _ast.Return):
-                return True
-            if isinstance(stmt, _ast.Assign):
-                return False
-
-            print >> sys.stderr, "Unknown stmt in is_terminal", stmt
-
-    def __init__(self, body, restrictions):
-        self.body = body
-        self.restrictions = restrictions
 
 class Decision(object):
     
@@ -279,7 +264,7 @@ class Decision(object):
         return "D%s" % self.ast_if.test.comparators[0].n
         #return "Decision %s@%x r_t=%s, r_f=%s" % (self.ast_if.test.comparators[0].n, id(self), self.r_t, self.r_f)
 
-class Func(object):
+class AutoTest(object):
 
     @classmethod
     def load_f(cls, f):
@@ -296,8 +281,9 @@ class Func(object):
             args.append(get_arg_type(arg.id)(arg.id))
         return args
 
-    def gen_test_cases(self):
-        for r, path in self.root_decision.children[0].gen_tests(ArgumentRestrictions(Number("a"), [])):
+    @classmethod
+    def gen_test_cases(cls, base):
+        for r, path in base.gen_tests(ArgumentRestrictions(Number("a"), [])):
             try:
                 arg, value = r.satisfy()
                 yield arg, value
@@ -305,41 +291,41 @@ class Func(object):
             except ValueError as e:
                 print >> sys.stderr,  e
 
-    def __init__(self, f, module=None):
-        self.f = f
-        self.module = module
+    @classmethod
+    def build(cls, f, module=None):
         if module is None and f.__module__ != "__main__":
-                self.module = f.__module__
+            module = f.__module__
 
-        if self.module is not None:
-            self.name = self.module + "." + f.func_name
+        if module is not None:
+            name = module + "." + f.func_name
 
-        self.tree = self.load_f(f)
-        self.args = self.load_args(self.tree)
+        tree = cls.load_f(f)
+        #args = cls.load_args(tree)
 
-        self.root_decision = Decision(None, self.tree.body)
-        self.root_decision.load_children(None)
+        root_decision = Decision(None, tree.body)
+        root_decision.load_children(None)
 
         success = ""
         errors = ""
-        for arg, value in self.gen_test_cases():
+        for arg, value in cls.gen_test_cases(root_decision.children[0]):
             try:
-                result = self.f(value)
-                success += "assert %s(%s) == %s\n" % (self.name, value, result)
+                result = f(value)
+                success += "assert %s(%s) == %s\n" % (name, value, result)
             except Exception as e:
                 e_name = str(e.__class__.__name__)
                 errors += "try:\n"
-                errors += "    %s(%s)\n" % (self.name, value)
+                errors += "    %s(%s)\n" % (name, value)
                 errors += "    assert False, 'Did not raise %s'\n" % e_name
                 errors += "except %s:\n" % e_name
                 errors += "     pass\n\n"
 
-        if self.module is not None:
-            print "import ", self.module
+        if module is not None:
+            print "import ", module
         print
         print success
         print errors
 
-        #print self.f, self.name, self.tree, self.args
+if __name__ == "__main__":
+    import test_file
 
-f = Func(test_file.lol)
+    f = AutoTest.build(test_file.lol)

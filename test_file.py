@@ -1,11 +1,12 @@
 def lol(a):
+    b = a
     if a == 0:
-        a = 12
+        b = 12
 
     if a == 1:
-        a = 11
+        b = 11
 
     if a == 2:
         raise KeyError("this sure is a strange function")
 
-    return 2 * a
+    return 2 * b
