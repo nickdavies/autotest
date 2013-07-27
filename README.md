@@ -4,21 +4,21 @@
 
 An example input of:
 
-   def lol(a):
-    if a == 0:
-        a = 12
+    def lol(a):
+        if a == 0:
+            a = 12
 
-    if a == 1:
-        a = 11
+        if a == 1:
+            a = 11
 
-    if a == 2:
-        raise KeyError("this sure is a strange function")
+        if a == 2:
+            raise KeyError("this sure is a strange function")
 
-    return 2 * a 
+        return 2 * a 
  
 will result in code that looks like:
 
-   import  test_file
+    import  test_file
 
     assert test_file.lol(0) == 24
     assert test_file.lol(1) == 22
