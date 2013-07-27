@@ -3,6 +3,8 @@ import ast
 import _ast
 import inspect
 
+import restrict
+
 ##################
 # Variable types #
 ##################
@@ -21,23 +23,23 @@ class Argument(object):
 class Number(Argument):
 
     def satisfy(self, restrictions):
-        final_r = Null(None)
+        final_r = restrict.Null(None)
         for r in restrictions:
             final_r = final_r.merge(r)
             if final_r is None:
                 restriction_list = " and ".join((str(a) for a in restrictions))
                 raise ValueError("Cannot satisfy restrictions:" + restriction_list)
 
-        if isinstance(final_r, Null):
+        if isinstance(final_r, restrict.Null):
             return 0
 
-        if isinstance(final_r, Equal):
+        if isinstance(final_r, restrict.Equal):
             return final_r.value
 
-        if isinstance(final_r, NotEqual):
+        if isinstance(final_r, restrict.NotEqual):
             return final_r.value + 1
 
-        if isinstance(final_r, NotIn):
+        if isinstance(final_r, restrict.NotIn):
             i = 1
             while i in final_r.value:
                 i += 1
@@ -54,86 +56,6 @@ class String(Argument):
 ################
 # Restrictions #
 ################
-class Restriction(object):
-
-    def __init__(self, value):
-        self.value = value
-
-    def inverse(self):
-        raise NotImplementedError("Not supported for this type")
-
-    def merge(self, r, rev=False):
-        '''
-        This function is the most complicated for restrictions
-        It must take another restriction and return a restriction that
-        is the logical equvilent of the two or None if one cannot exist
-        '''
-        if rev:
-            raise NotImplementedError("merge for %s and %s is not defined" % (self.__class__, r.__class__))
-
-        return r.merge(self, True)
-
-    def __str__(self):
-        return str(self.value)
-
-class Null(Restriction):
-    
-    def merge(self, r, rev=False):
-        return r
-
-class Equal(Restriction): 
-    
-    def inverse(self):
-        return NotEqual(self.value)
-
-    def merge(self, r, rev=False):
-        if isinstance(r, Equal):
-            if r.value == self.value:
-                return self
-            return None
-
-        if isinstance(r, NotEqual):
-            if r.value == self.value:
-                return None
-            return self
-
-        if isinstance(r, NotIn):
-            if self.value in r.value:
-                return None
-            return self
-
-        return super(Equal, self).merge(r, rev)
-
-    def __str__(self):
-        return "== %s" % super(Equal, self).__str__()
-
-class NotEqual(Restriction):
-    
-    def inverse(self):
-        return Equal(self.value)
-
-    def merge(self, r, rev=False):
-        if isinstance(r, NotEqual):
-            if r.value == self.value:
-                return self
-            return NotIn(set([self.value, r.value]))
-
-        if isinstance(r, NotIn):
-            if self.value in r.value:
-                return r
-            return NotIn(set([self.value]).union(r.value))
-
-
-        return super(NotEqual, self).merge(r, rev)
-
-    def __str__(self):
-        return "!= %s" % super(NotEqual, self).__str__()
-
-class NotIn(Restriction):
-
-    def __str__(self):
-        return "not in %s" % super(NotIn, self).__str__()
-
 class ArgumentRestrictions(object):
 
     def __init__(self, arg, restrictions):
@@ -160,11 +82,27 @@ class Stmt(object):
 
     @classmethod
     def split_equals(cls, left, right):
-        
+        if isinstance(left, _ast.Num) and isinstance(right, _ast.Name):
+            swap = left
+            left = right
+            right = swap
+
         if isinstance(left, _ast.Name) and isinstance(right, _ast.Num):
             arg = Number(left.id)
-            rest = Equal(right.n)
-            return ArgumentRestrictions(arg, [rest]), ArgumentRestrictions(arg, [rest.inverse()]),
+            rest = restrict.Equal(right.n)
+            return ArgumentRestrictions(arg, [rest]), ArgumentRestrictions(arg, [rest.inverse()])
+
+        raise NotImplementedError("Can only compare name to number")
+
+    @classmethod
+    def split_lt(cls, left, right, and_eq):
+
+        if isinstance(left, _ast.Name) and isinstance(right, _ast.Num):
+            arg = Number(left.id)
+            rest = restrict.LessThan(right.n, and_eq)
+
+            return ArgumentRestrictions(arg, [rest]), ArgumentRestrictions(arg, [rest.inverse()])
+        raise NotImplementedError("Can only compare name to number")
 
     @classmethod
     def split_compare(cls, compare):
@@ -177,6 +115,9 @@ class Stmt(object):
 
         if isinstance(op, _ast.Eq):
             return cls.split_equals(left, right) 
+
+        if isinstance(op, _ast.Lt):
+            return cls.split_lt(left, right, False)
         else:
             raise NotImplementedError("Operator not supported: %s" % op)
 
