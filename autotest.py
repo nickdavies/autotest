@@ -22,30 +22,40 @@ class Argument(object):
 
 class Number(Argument):
 
-    def satisfy(self, restrictions):
-        final_r = restrict.Null(None)
-        for r in restrictions:
-            final_r = final_r.merge(r)
-            if final_r is None:
-                restriction_list = " and ".join((str(a) for a in restrictions))
-                raise ValueError("Cannot satisfy restrictions:" + restriction_list)
-
-        if isinstance(final_r, restrict.Null):
+    def satisfy(self, r):
+        if isinstance(r, restrict.Null):
             return 0
 
-        if isinstance(final_r, restrict.Equal):
-            return final_r.value
+        if isinstance(r, restrict.Equal):
+            return r.value
 
-        if isinstance(final_r, restrict.NotEqual):
-            return final_r.value + 1
+        if isinstance(r, restrict.NotEqual):
+            return r.value + 1
 
-        if isinstance(final_r, restrict.NotIn):
+        if isinstance(r, restrict.NotIn):
             i = 1
-            while i in final_r.value:
+            while i in r.value:
                 i += 1
             return i
 
-        raise NotImplementedError("Cannot satisfy restrictions: %s" % final_r)
+        if isinstance(r, restrict.LessThan):
+            if r.eq:
+                return r.value
+            else:
+                return r.value - 1
+
+        if isinstance(r, restrict.GreaterThan):
+            if r.eq:
+                return r.value
+            else:
+                return r.value + 1
+
+        if isinstance(r, restrict.Between):
+            res = r.gt.value + 1
+            assert r.lt.within(res)
+            return res
+
+        raise NotImplementedError("Cannot satisfy restrictions: %s" % r)
 
     def __str__(self):
         return "Num(%s)" % super(Number, self).__str__()
@@ -58,15 +68,27 @@ class String(Argument):
 ################
 class ArgumentRestrictions(object):
 
-    def __init__(self, arg, restrictions):
+    def __init__(self, arg, restrictions=None):
         self.arg = arg
+
+        if restrictions is None:
+            restrictions = restrict.Null(None)
+
         self.restrictions = restrictions
 
     def satisfy(self):
         return self.arg, self.arg.satisfy(self.restrictions)
 
-    def extend(self, restrictions):
-        return ArgumentRestrictions(self.arg, self.restrictions + restrictions.restrictions)
+    def extend(self, r):
+        print "Converting %s and %s" % (self.restrictions, r.restrictions),
+        new_r = self.restrictions.merge(r.restrictions)
+        print "into %s" % new_r
+        if new_r is None:
+            raise restrict.ImpossibleRestrictionError(
+                "Cannot satisfy restrictions: %s and %s" % (self.restrictions, r.restrictions)
+            )
+
+        return ArgumentRestrictions(self.arg, new_r)
 
     def __str__(self):
         return " and ".join((str(self.arg) + " " + str(r) for r in self.restrictions))
@@ -90,7 +112,7 @@ class Stmt(object):
         if isinstance(left, _ast.Name) and isinstance(right, _ast.Num):
             arg = Number(left.id)
             rest = restrict.Equal(right.n)
-            return ArgumentRestrictions(arg, [rest]), ArgumentRestrictions(arg, [rest.inverse()])
+            return ArgumentRestrictions(arg, rest), ArgumentRestrictions(arg, rest.inverse())
 
         raise NotImplementedError("Can only compare name to number")
 
@@ -101,7 +123,7 @@ class Stmt(object):
             arg = Number(left.id)
             rest = restrict.LessThan(right.n, and_eq)
 
-            return ArgumentRestrictions(arg, [rest]), ArgumentRestrictions(arg, [rest.inverse()])
+            return ArgumentRestrictions(arg, rest), ArgumentRestrictions(arg, rest.inverse())
         raise NotImplementedError("Can only compare name to number")
 
     @classmethod
@@ -118,6 +140,9 @@ class Stmt(object):
 
         if isinstance(op, _ast.Lt):
             return cls.split_lt(left, right, False)
+
+        if isinstance(op, _ast.Gt):
+            return cls.split_lt(left, right, True)[::-1]
         else:
             raise NotImplementedError("Operator not supported: %s" % op)
 
@@ -179,27 +204,33 @@ class Decision(object):
         self.n_f = n
 
     def gen_tests(self, restrictions, path=[]):
-        #print "Visiting:", self, "via:", path
+        print "Visiting:", self, "via:", path
 
-        r_t = restrictions.extend(self.r_t)
-        r_f = restrictions.extend(self.r_f)
+        try:
+            r_t = restrictions.extend(self.r_t)
+            path_t = path + [(self, True)]
 
-        path_t = path + [(self, True)]
-        path_f = path + [(self, False)]
+            # go into IF
+            if self.n_t is not None:
+                for test in self.n_t.gen_tests(r_t, path_t):
+                    yield test
+            else: 
+                yield r_t, path_t
+        except restrict.ImpossibleRestrictionError as e:
+            print >> sys.stderr,  e
 
-        # go into IF
-        if self.n_t is not None:
-            for test in self.n_t.gen_tests(r_t, path_t):
-                yield test
-        else: 
-            yield r_t, path_t
+        try:
+            r_f = restrictions.extend(self.r_f)
+            path_f = path + [(self, False)]
 
-        # dont go into IF
-        if self.n_f is not None:
-            for test in self.n_t.gen_tests(r_f, path_f):
-                yield test
-        else: 
-            yield r_f, path_f
+            # dont go into IF
+            if self.n_f is not None:
+                for test in self.n_t.gen_tests(r_f, path_f):
+                    yield test
+            else: 
+                yield r_f, path_f
+        except restrict.ImpossibleRestrictionError as e:
+            print >> sys.stderr,  e
 
     def __str__(self):
         return "D%s" % self.ast_if.test.comparators[0].n
@@ -224,16 +255,12 @@ class AutoTest(object):
 
     @classmethod
     def gen_test_cases(cls, base):
-        for r, path in base.gen_tests(ArgumentRestrictions(Number("a"), [])):
-            try:
-                arg, value = r.satisfy()
-                yield arg, value
-                print >> sys.stderr, arg.name, "==", value
-            except ValueError as e:
-                print >> sys.stderr,  e
+        for r, path in base.gen_tests(ArgumentRestrictions(Number("a"))):
+            arg, value = r.satisfy()
+            yield arg, value, path
 
     @classmethod
-    def build(cls, f, module=None):
+    def build(cls, f, module=None, with_path=False):
         if module is None and f.__module__ != "__main__":
             module = f.__module__
 
@@ -246,27 +273,39 @@ class AutoTest(object):
         root_decision = Decision(None, tree.body)
         root_decision.load_children(None)
 
-        success = ""
-        errors = ""
-        for arg, value in cls.gen_test_cases(root_decision.children[0]):
+        test_ok = []
+        test_error = []
+
+        for arg, value, path in cls.gen_test_cases(root_decision.children[0]):
+
+            path_comment = ""
+            if with_path:
+                test_path = " -> ".join( (str(d) + " " + str(tf) for d, tf in path) )
+                path_comment += " # %s" % test_path
             try:
                 result = f(value)
-                success += "assert %s(%s) == %s\n" % (name, value, result)
-            except Exception as e:
-                e_name = str(e.__class__.__name__)
-                errors += "try:\n"
-                errors += "    %s(%s)\n" % (name, value)
-                errors += "    assert False, 'Did not raise %s'\n" % e_name
-                errors += "except %s:\n" % e_name
-                errors += "     pass\n\n"
 
+                test = "assert %s(%s) == %s%s" % (name, value, result, path_comment)
+                test_ok.append(test)
+
+            except Exception as e:
+                errors.append((
+                    str(e.__class__.__name__), 
+                    "%s(%s)%s" % (name, value, path_comment)
+                ))
+
+        module_str = ""
         if module is not None:
-            print "import ", module
-        print
-        print success
-        print errors
+            module_str = "import %s" % module
+
+        return f.func_name, module_str, test_ok, test_error
 
 if __name__ == "__main__":
     import test_file
 
-    f = AutoTest.build(test_file.lol)
+    tests =  AutoTest.build(test_file.lol)
+
+
+
+
+    print "\n\n".join(tests)

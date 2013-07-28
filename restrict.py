@@ -1,3 +1,7 @@
+
+class ImpossibleRestrictionError(Exception):
+    pass
+
 class Restriction(object):
 
     def __init__(self, value):
@@ -46,22 +50,11 @@ class Equal(Restriction):
                 return None
             return self
 
-        if isinstance(r, LessThan):
-            if r.eq and self.value <= r.value:
+        if isinstance(r, LessThan) or isinstance(r, GreaterThan) or isinstance(r, Between):
+            # if equal is in the range then ok
+            # otherwise its impossible
+            if r.within(self.value):
                 return self
-
-            if not r.eq and self.value < r.value:
-                return self
-
-            return None
-
-        if isinstance(r, GreaterThan):
-            if r.eq and self.value >= r.value:
-                return self
-
-            if not r.eq and self.value > r.value:
-                return self
-
             return None
 
         return super(Equal, self).merge(r, rev)
@@ -85,23 +78,21 @@ class NotEqual(Restriction):
                 return r
             return NotIn(set([self.value]).union(r.value))
 
-        if isinstance(r, LessThan):
-            if r.eq and self.value <= r.value:
-                return self
+        if isinstance(r, LessThan) or isinstance(r, GreaterThan):
+            if not r.within(self.value):
+                return r
 
-            if not r.eq and self.value < r.value:
-                return self
+            #TODO: probably a better (less restrictive way)
+            return r.__class__(self.value, False)
 
-            return None
-
-        if isinstance(r, GreaterThan):
-            if r.eq and self.value >= r.value:
-                return self
-
-            if not r.eq and self.value > r.value:
-                return self
-
-            return None
+        if isinstance(r, Between):
+            if r.within(self.value):
+                if (self.value - r.lt.value) < (self.value - r.gt.value):
+                    return Between(r.lt, r.gt.merge(self))
+                else:
+                    return Between(r.lt.merge(self), r.gt)
+            
+            return r
 
         return super(NotEqual, self).merge(r, rev)
 
@@ -113,6 +104,23 @@ class NotIn(Restriction):
     def __str__(self):
         return "not in %s" % super(NotIn, self).__str__()
 
+class Between(Restriction):
+
+    def __init__(self, lt, gt):
+        self.lt = lt
+        self.gt = gt
+
+        assert lt.value >= gt.value
+
+        if lt.value == gt.value:
+            assert lt.eq and gt.eq
+
+    def within(self, value):
+        return self.lt.within(value) and self.gt.within(value)
+
+    def __str__(self):
+        return str(self.lt) + " and " + str(self.gt)
+
 class LessThan(Restriction):
     
     def __init__(self, value, eq):
@@ -122,10 +130,42 @@ class LessThan(Restriction):
     def inverse(self):
         return GreaterThan(self.value, not self.eq)
 
+    def within(self, value):
+        if self.eq:
+            return value <= self.value
+        return value < self.value
+
+    def merge(self, r, rev=False):
+        if isinstance(r, LessThan):
+            if self.value == r.value:
+                if not self.eq:
+                    return self
+                return r
+            if self.value < r.value:
+                return self
+            return r
+
+        if isinstance(r, GreaterThan):
+            # 5 < x > 5 OR 5 <= x => 5
+            if r.value == self.value:
+                if r.eq and self.eq:
+                    return Equal(self.value)
+                return None
+
+            if r.value < self.value:
+                try:
+                    return Between(self, r)
+                except AssertionError:
+                    return None
+
+            return None
+
+        return super(LessThan, self).merge(r, rev)
+
     def __str__(self):
         if self.eq:
-            return ">= %s" % super(LessThan, self).__str__()
-        return "> %s" % super(LessThan, self).__str__()
+            return "<= %s" % super(LessThan, self).__str__()
+        return "< %s" % super(LessThan, self).__str__()
 
 class GreaterThan(Restriction):
     
@@ -135,6 +175,23 @@ class GreaterThan(Restriction):
 
     def inverse(self):
         return LessThan(self.value, not self.eq)
+
+    def within(self, value):
+        if self.eq:
+            return value >= self.value
+        return value > self.value
+
+    def merge(self, r, rev=False):
+        if isinstance(r, GreaterThan):
+            if self.value == r.value:
+                if not self.eq:
+                    return self
+                return r
+            if self.value > r.value:
+                return self
+            return r
+
+        return super(GreaterThan, self).merge(r, rev)
 
     def __str__(self):
         if self.eq:
