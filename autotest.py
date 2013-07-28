@@ -80,9 +80,9 @@ class ArgumentRestrictions(object):
         return self.arg, self.arg.satisfy(self.restrictions)
 
     def extend(self, r):
-        print "Converting %s and %s" % (self.restrictions, r.restrictions),
+        print >> sys.stderr, "Converting %s and %s" % (self.restrictions, r.restrictions),
         new_r = self.restrictions.merge(r.restrictions)
-        print "into %s" % new_r
+        print >> sys.stderr, "into %s" % new_r
         if new_r is None:
             raise restrict.ImpossibleRestrictionError(
                 "Cannot satisfy restrictions: %s and %s" % (self.restrictions, r.restrictions)
@@ -192,7 +192,7 @@ class Decision(object):
 
             children[i].set_false_next(my_next)
 
-            #print children[i], "t_next =", children[i].n_t, "f_next =", children[i].n_t
+            print >> sys.stderr, children[i], "t_next =", children[i].n_t, "f_next =", children[i].n_t
 
         self.children = children
         return len(children)
@@ -204,7 +204,7 @@ class Decision(object):
         self.n_f = n
 
     def gen_tests(self, restrictions, path=[]):
-        print "Visiting:", self, "via:", path
+        print >> sys.stderr, "Visiting:", self, "via:", path
 
         try:
             r_t = restrictions.extend(self.r_t)
@@ -289,23 +289,26 @@ class AutoTest(object):
                 test_ok.append(test)
 
             except Exception as e:
-                errors.append((
-                    str(e.__class__.__name__), 
-                    "%s(%s)%s" % (name, value, path_comment)
-                ))
+                test_error.append({
+                    "error_name": str(e.__class__.__name__), 
+                    "body": "%s(%s)%s" % (name, value, path_comment)
+                })
 
         module_str = ""
         if module is not None:
             module_str = "import %s" % module
 
-        return f.func_name, module_str, test_ok, test_error
+        return {
+            "func_name": f.func_name, 
+            "import_str": module_str, 
+            "ok": test_ok, 
+            "errors": test_error
+        }
 
 if __name__ == "__main__":
+    import templates
     import test_file
 
-    tests =  AutoTest.build(test_file.lol)
+    test = AutoTest.build(test_file.lol)
+    print templates.format_tests([test])
 
-
-
-
-    print "\n\n".join(tests)

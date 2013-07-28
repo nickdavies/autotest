@@ -11,4 +11,7 @@ def lol(a):
     if a == 6:
         b += 1
 
+    if a == 11:
+        raise Exception("ohh no!")
+
     return 2 * b
